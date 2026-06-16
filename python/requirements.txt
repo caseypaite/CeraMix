@@ -1,0 +1,21 @@
+# CeraMix inference backend dependencies.
+# Pinned loosely during scaffold; lock before release.
+
+# Inference runtime (hardware-accelerated; install the provider build that
+# matches the target platform — see python/README.md).
+onnxruntime>=1.18           # CPU baseline; swap for onnxruntime-gpu / -directml / -silicon
+
+# Audio I/O
+soundfile>=0.12             # libsndfile bindings — high-fidelity WAV/FLAC
+numpy>=1.24
+
+# Model fetching
+requests>=2.31
+tqdm>=4.66
+
+# Optional / model-specific (uncomment as backends are wired up):
+# demucs>=4.0               # stem splitting (PyTorch reference impl)
+# deepfilternet>=0.5        # speech enhancement / denoise
+# torch>=2.2                # only if using PyTorch-native model paths
+
+# NOTE: FFmpeg is required on PATH but is a system binary, not a pip package.

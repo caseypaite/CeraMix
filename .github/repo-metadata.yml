@@ -1,0 +1,47 @@
+# Repository metadata for CeraMix
+# Apply via the GitHub UI (Settings → General / About) or the GitHub API.
+# GitHub allows a maximum of 20 topics; this list is ordered by priority.
+
+description: >-
+  🎛️ Cross-platform desktop app for AI audio cleanup — local stem splitting
+  (Demucs/HTDemucs) and noise removal (DeepFilterNet) with a cyber-noir
+  pro-audio UI. Built with Tauri, React & ONNX Runtime.
+
+homepage: ""
+
+topics:
+  - audio
+  - audio-processing
+  - stem-separation
+  - source-separation
+  - noise-reduction
+  - speech-enhancement
+  - denoising
+  - demucs
+  - deepfilternet
+  - onnx
+  - onnxruntime
+  - tauri
+  - react
+  - typescript
+  - rust
+  - python
+  - desktop-app
+  - cross-platform
+  - ai
+  - machine-learning
+
+# Extended tag pool (beyond the 20-topic limit) for search, packaging, and
+# store listings:
+keywords:
+  - htdemucs
+  - mdx-net
+  - cleanunet
+  - voicefixer
+  - ffmpeg
+  - waveform
+  - wavesurfer
+  - audio-engineering
+  - music-production
+  - dereverb
+  - vocal-isolation
