@@ -1,6 +1,8 @@
 //! Backend health & environment checks.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
+use tauri_plugin_shell::ShellExt;
 
 #[derive(Debug, Serialize)]
 pub struct BackendStatus {
@@ -10,15 +12,47 @@ pub struct BackendStatus {
     pub message: String,
 }
 
-/// Probe the Python inference backend: confirm the interpreter, FFmpeg, and the
-/// best available ONNX execution provider (with CPU fallback).
+/// JSON shape returned by `ceramix-engine --check`.
+#[derive(Debug, Deserialize)]
+struct EngineCheckOutput {
+    #[serde(default)]
+    ffmpeg_ok: bool,
+    #[serde(default = "default_provider")]
+    onnx_provider: String,
+    #[serde(default)]
+    message: String,
+}
+
+fn default_provider() -> String {
+    "CPU".into()
+}
+
+/// Probe the Python inference sidecar: confirm it starts, detect the best
+/// available ONNX execution provider (CUDA → DirectML → CoreML → CPU), and
+/// verify FFmpeg is on PATH inside the sidecar environment.
 #[tauri::command]
-pub async fn check_backend() -> Result<BackendStatus, String> {
-    // TODO: spawn `python -m ceramix_engine.server --check` and parse the result.
+pub async fn check_backend(app: AppHandle) -> Result<BackendStatus, String> {
+    let output = app
+        .shell()
+        .sidecar("ceramix-engine")
+        .map_err(|e| format!("Failed to locate sidecar: {e}"))?
+        .args(["--check"])
+        .output()
+        .await
+        .map_err(|e| format!("Sidecar launch failed: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("ceramix-engine --check exited non-zero: {stderr}"));
+    }
+
+    let parsed: EngineCheckOutput = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse sidecar output: {e}"))?;
+
     Ok(BackendStatus {
-        python_ok: false,
-        ffmpeg_ok: false,
-        onnx_provider: "CPU".into(),
-        message: "Backend check not yet implemented (scaffold).".into(),
+        python_ok: true,
+        ffmpeg_ok: parsed.ffmpeg_ok,
+        onnx_provider: parsed.onnx_provider,
+        message: parsed.message,
     })
 }

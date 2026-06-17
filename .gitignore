@@ -11,9 +11,13 @@ build/
 # Tauri / Rust
 src-tauri/target/
 src-tauri/gen/
+# Sidecar binaries are built by CI / build-sidecar.sh — never commit them.
+src-tauri/binaries/
 
 # Python
 python/.venv/
+python/dist/
+python/build/
 __pycache__/
 *.py[cod]
 *.egg-info/

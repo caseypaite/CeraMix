@@ -1,0 +1,227 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0) — must already exist in the repo"
+        required: true
+
+permissions:
+  contents: write # required for creating releases and uploading assets
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+  PNPM_VERSION: "9"
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 1 — Bundle the Python inference backend into a standalone binary.
+  #          Runs in parallel for Windows and Linux.
+  # ──────────────────────────────────────────────────────────────────────────
+  build-sidecar:
+    name: Sidecar / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            triple: x86_64-pc-windows-msvc
+            exe_suffix: ".exe"
+            pyinstaller_output: python/dist/ceramix-engine.exe
+          - os: ubuntu-22.04
+            triple: x86_64-unknown-linux-gnu
+            exe_suffix: ""
+            pyinstaller_output: python/dist/ceramix-engine
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ matrix.os }}-${{ hashFiles('python/requirements.txt') }}
+          restore-keys: pip-${{ matrix.os }}-
+
+      - name: Install Python dependencies + PyInstaller
+        working-directory: python
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build sidecar (PyInstaller --onefile)
+        working-directory: python
+        run: pyinstaller ceramix_engine.spec --distpath dist --workpath build --noconfirm
+
+      # Rename to match Tauri v2's sidecar convention:
+      #   binaries/ceramix-engine-{triple}[.exe]
+      - name: Rename to Tauri sidecar convention
+        shell: bash
+        run: |
+          src="${{ matrix.pyinstaller_output }}"
+          dst="python/dist/ceramix-engine-${{ matrix.triple }}${{ matrix.exe_suffix }}"
+          mv "$src" "$dst"
+          echo "Sidecar: $dst"
+          ls -lh "python/dist/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-${{ matrix.os }}
+          path: python/dist/ceramix-engine-${{ matrix.triple }}${{ matrix.exe_suffix }}
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 2 — Build the Tauri app with the sidecar embedded.
+  #          Downloads the matching sidecar artifact, places it in
+  #          src-tauri/binaries/, then runs `pnpm tauri build`.
+  # ──────────────────────────────────────────────────────────────────────────
+  build-tauri:
+    name: Tauri / ${{ matrix.os }}
+    needs: build-sidecar
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            triple: x86_64-pc-windows-msvc
+            exe_suffix: ".exe"
+            tauri_args: "--target x86_64-pc-windows-msvc --bundles nsis"
+            artifact_glob: "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe"
+
+          - os: ubuntu-22.04
+            triple: x86_64-unknown-linux-gnu
+            exe_suffix: ""
+            tauri_args: "--target x86_64-unknown-linux-gnu --bundles appimage"
+            artifact_glob: "src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Place sidecar ──────────────────────────────────────────────────────
+      - uses: actions/download-artifact@v4
+        with:
+          name: sidecar-${{ matrix.os }}
+          path: sidecar-staging
+
+      - name: Place sidecar in src-tauri/binaries/
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries
+          sidecar="ceramix-engine-${{ matrix.triple }}${{ matrix.exe_suffix }}"
+          cp "sidecar-staging/$sidecar" "src-tauri/binaries/$sidecar"
+          echo "Placed: src-tauri/binaries/$sidecar"
+
+      # ── Linux: system packages required by WebKitGTK / Tauri ──────────────
+      - name: Install Linux system dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libappindicator3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libglib2.0-dev
+
+      # ── Rust ──────────────────────────────────────────────────────────────
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.triple }}
+
+      # ── Node + pnpm ───────────────────────────────────────────────────────
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # ── Build ─────────────────────────────────────────────────────────────
+      - name: Build Tauri app
+        run: pnpm tauri build ${{ matrix.tauri_args }}
+        env:
+          # Optional Tauri updater signing. Configure these secrets in
+          # Settings → Secrets → Actions to enable signed updates.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: List bundle output
+        shell: bash
+        run: ls -lh $(dirname "${{ matrix.artifact_glob }}") || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tauri-${{ matrix.os }}
+          path: ${{ matrix.artifact_glob }}
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 3 — Create a GitHub Release and attach all platform binaries.
+  # ──────────────────────────────────────────────────────────────────────────
+  release:
+    name: GitHub Release
+    needs: build-tauri
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Resolve effective tag for both push and manual-dispatch triggers.
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tauri-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -lh release-assets/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: "CeraMix ${{ steps.tag.outputs.name }}"
+          draft: false
+          # Tags containing a hyphen (e.g. v0.1.0-beta) are marked pre-release.
+          prerelease: ${{ contains(steps.tag.outputs.name, '-') }}
+          generate_release_notes: true
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
