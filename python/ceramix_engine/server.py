@@ -52,9 +52,21 @@ def handle_export_video(request: dict) -> dict:
     return {"job_id": str(uuid.uuid4()), "outputs": [out]}
 
 
+def handle_run_stem_split(request: dict) -> dict:
+    from .processors.stem_split import split_files
+
+    paths = split_files(
+        input_path=request["input_path"],
+        topology=request.get("topology", "4stem"),
+        output_dir=request.get("output_dir", ""),
+    )
+    return {"job_id": str(uuid.uuid4()), "outputs": list(paths.values())}
+
+
 _HANDLERS = {
     "mix_stems": handle_mix_stems,
     "export_video": handle_export_video,
+    "run_stem_split": handle_run_stem_split,
 }
 
 

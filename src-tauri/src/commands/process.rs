@@ -3,27 +3,29 @@
 //! the main thread never blocks.
 
 use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
+use tauri_plugin_shell::ShellExt;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct StemSplitRequest {
     pub input_path: String,
     pub topology: String, // "2stem" | "4stem"
     pub output_dir: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct DenoiseRequest {
     pub input_path: String,
     pub intensity: u8, // 0-100
     pub output_dir: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ExportRequest {
     pub source_path: String,
     pub output_path: String,
     pub format: String,   // "wav" | "mp3"
-    pub bit_depth: u8,     // 16 | 24 | 32 (WAV only)
+    pub bit_depth: u8,    // 16 | 24 | 32 (WAV only)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,10 +35,29 @@ pub struct JobResult {
 }
 
 /// Run AI stem splitting (Demucs/HTDemucs via ONNX) on a separate worker.
+/// Delegates to the Python sidecar which extracts audio via FFmpeg and writes
+/// per-stem WAV files.  Replace with ONNX inference once model weights are bundled.
 #[tauri::command]
-pub async fn run_stem_split(req: StemSplitRequest) -> Result<JobResult, String> {
-    let _ = &req;
-    Err("run_stem_split not yet implemented (scaffold).".into())
+pub async fn run_stem_split(app: AppHandle, req: StemSplitRequest) -> Result<JobResult, String> {
+    let request_json =
+        serde_json::to_string(&req).map_err(|e| format!("Serialise error: {e}"))?;
+
+    let output = app
+        .shell()
+        .sidecar("ceramix-engine")
+        .map_err(|e| format!("Failed to locate sidecar: {e}"))?
+        .args(["--command", "run_stem_split", "--request", &request_json])
+        .output()
+        .await
+        .map_err(|e| format!("Sidecar launch failed: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("run_stem_split failed: {stderr}"));
+    }
+
+    serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse sidecar output: {e}"))
 }
 
 /// Run AI noise removal / speech enhancement (DeepFilterNet via ONNX).

@@ -1,6 +1,8 @@
 import { useAppStore } from "../../store/useAppStore";
+import type { StemTrack } from "../../store/useAppStore";
 import StemMixer from "../StemMixer/StemMixer";
 import { ipc } from "../../lib/ipc";
+import { isVideoFile } from "../FileExplorer/FileExplorer";
 
 /**
  * Right panel — stem topology, denoise, stem mixer, and export controls.
@@ -15,8 +17,47 @@ export default function ProcessingControls() {
   const mixedAudioPath = useAppStore((s) => s.mixedAudioPath);
   const setProgress = useAppStore((s) => s.setProgress);
   const setMixedAudioPath = useAppStore((s) => s.setMixedAudioPath);
+  const addStems = useAppStore((s) => s.addStems);
+  const clearStems = useAppStore((s) => s.clearStems);
 
   const activeFile = queue.find((f) => f.id === activeFileId) ?? null;
+
+  function outputDirFor(filePath: string): string {
+    return filePath.replace(/[/\\][^/\\]+$/, "");
+  }
+
+  async function handleStemSplit() {
+    if (!activeFile) return;
+    clearStems();
+    setProgress({ active: true, stage: "Splitting stems…", progress: 0.1 });
+    try {
+      const result = await ipc.runStemSplit(
+        activeFile.path,
+        config.topology,
+        outputDirFor(activeFile.path),
+      );
+      // Build StemTrack objects from output paths.
+      // Paths are named "<base>_<stemname>.wav" by the Python backend.
+      const newStems: StemTrack[] = result.outputs.map((path) => {
+        const filename = path.split(/[/\\]/).pop() ?? "";
+        const m = filename.match(/_(\w+)\.\w+$/);
+        const stemId = m?.[1] ?? filename.replace(/\.\w+$/, "");
+        return {
+          id: stemId,
+          label: stemId.charAt(0).toUpperCase() + stemId.slice(1),
+          path,
+          volume: 1,
+          pan: 0,
+          muted: false,
+        };
+      });
+      addStems(newStems);
+      setProgress({ active: false, stage: "", progress: 0 });
+    } catch (err) {
+      setProgress({ active: false, stage: "", progress: 0 });
+      console.error("run_stem_split failed:", err);
+    }
+  }
 
   async function handleMixStems() {
     if (!stems.length || !activeFile) return;
@@ -42,7 +83,9 @@ export default function ProcessingControls() {
 
   async function handleExportVideo() {
     if (!activeFile || !mixedAudioPath) return;
-    const ext = sourceIsVideo ? activeFile.path.match(/\.[^.]+$/)?.[0] ?? ".mp4" : ".mp4";
+    const ext = isVideoFile(activeFile.path)
+      ? (activeFile.path.match(/\.[^.]+$/)?.[0] ?? ".mp4")
+      : ".mp4";
     const outputPath = activeFile.path.replace(/(\.[^.]+)$/, `_export${ext}`);
     setProgress({ active: true, stage: "Exporting video…", progress: 0.1 });
     try {
@@ -106,10 +149,10 @@ export default function ProcessingControls() {
         />
       </section>
 
-      {/* Stem mixer — appears after stem splitting */}
+      {/* Stem mixer — appears after splitting */}
       {stems.length > 0 && <StemMixer />}
 
-      {/* Export */}
+      {/* Export format */}
       <section>
         <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-accent-blue">
           Export
@@ -133,10 +176,17 @@ export default function ProcessingControls() {
 
       {/* Action buttons */}
       <div className="mt-auto flex flex-col gap-2">
-        <button className="rounded bg-accent-violet/90 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-accent-violet">
+        <button
+          onClick={handleStemSplit}
+          disabled={!activeFile}
+          className="rounded bg-accent-violet/90 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-accent-violet disabled:cursor-not-allowed disabled:opacity-40"
+        >
           Split Stems
         </button>
-        <button className="rounded bg-accent-amber/90 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-accent-amber">
+        <button
+          disabled={!activeFile}
+          className="rounded bg-accent-amber/90 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-accent-amber disabled:cursor-not-allowed disabled:opacity-40"
+        >
           Denoise
         </button>
         {stems.length > 0 && (

@@ -1,30 +1,85 @@
-/**
- * Wavesurfer.js lifecycle hook for the waveform editor.
- *
- * Scaffold: returns a ref to attach to the container and stubbed transport
- * controls. Wire up an actual WaveSurfer instance in Step 2.
- */
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import WaveSurfer from "wavesurfer.js";
 
 export interface Transport {
   play: () => void;
   pause: () => void;
   seek: (seconds: number) => void;
   toggleLoop: () => void;
+  isPlaying: boolean;
+  isLooping: boolean;
 }
 
-export function useWaveform(_url?: string) {
+/**
+ * Manages a WaveSurfer instance bound to a container ref.
+ * Re-creates the instance when `url` changes; tears it down on unmount.
+ */
+export function useWaveform(url?: string) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const wsRef = useRef<WaveSurfer | null>(null);
+  const loopRef = useRef(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isLooping, setIsLooping] = useState(false);
 
-  // TODO: instantiate WaveSurfer in a useEffect keyed on `_url`, apply the
-  // cyber-noir palette (electric blue / violet), and clean up on unmount.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !url) return;
 
-  const transport: Transport = {
-    play: useCallback(() => {}, []),
-    pause: useCallback(() => {}, []),
-    seek: useCallback((_s: number) => {}, []),
-    toggleLoop: useCallback(() => {}, []),
+    wsRef.current?.destroy();
+    wsRef.current = null;
+    setIsPlaying(false);
+
+    const ws = WaveSurfer.create({
+      container,
+      waveColor: "#38bdf8",     // electric blue
+      progressColor: "#8b5cf6", // violet
+      cursorColor: "#8b5cf6",
+      height: 128,
+      barWidth: 2,
+      barGap: 1,
+      barRadius: 2,
+      normalize: true,
+    });
+
+    ws.on("play", () => setIsPlaying(true));
+    ws.on("pause", () => setIsPlaying(false));
+    ws.on("finish", () => {
+      setIsPlaying(false);
+      if (loopRef.current) {
+        ws.seekTo(0);
+        ws.play();
+      }
+    });
+
+    ws.load(url).catch(() => {/* ignore load errors — file may not exist yet */});
+    wsRef.current = ws;
+
+    return () => {
+      ws.destroy();
+      wsRef.current = null;
+      setIsPlaying(false);
+    };
+  }, [url]);
+
+  const play = useCallback(() => wsRef.current?.play(), []);
+  const pause = useCallback(() => wsRef.current?.pause(), []);
+
+  const seek = useCallback((seconds: number) => {
+    const ws = wsRef.current;
+    if (!ws) return;
+    const d = ws.getDuration();
+    if (d > 0) ws.seekTo(seconds / d);
+  }, []);
+
+  const toggleLoop = useCallback(() => {
+    setIsLooping((prev) => {
+      loopRef.current = !prev;
+      return !prev;
+    });
+  }, []);
+
+  return {
+    containerRef,
+    transport: { play, pause, seek, toggleLoop, isPlaying, isLooping },
   };
-
-  return { containerRef, transport };
 }
