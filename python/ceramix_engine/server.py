@@ -63,10 +63,49 @@ def handle_run_stem_split(request: dict) -> dict:
     return {"job_id": str(uuid.uuid4()), "outputs": list(paths.values())}
 
 
+def handle_run_denoise(request: dict) -> dict:
+    import pathlib
+    from .audio_io import load, write_wav
+    from .processors.denoise import denoise
+
+    input_path = request["input_path"]
+    intensity = int(request.get("intensity", 100))
+    output_dir = request.get("output_dir", "")
+
+    out_dir = pathlib.Path(output_dir) if output_dir else pathlib.Path(input_path).parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    output_path = str(out_dir / f"{pathlib.Path(input_path).stem}_denoised.wav")
+
+    buf = load(input_path)
+    enhanced = denoise(buf, intensity=intensity)
+    write_wav(output_path, enhanced)
+
+    return {"job_id": str(uuid.uuid4()), "outputs": [output_path]}
+
+
+def handle_export_audio(request: dict) -> dict:
+    from .audio_io import load, write_wav, write_mp3
+
+    source_path = request["source_path"]
+    output_path = request["output_path"]
+    fmt = request.get("format", "wav").lower()
+    bit_depth = int(request.get("bit_depth", 24))
+
+    buf = load(source_path)
+    if fmt == "mp3":
+        write_mp3(output_path, buf)
+    else:
+        write_wav(output_path, buf, bit_depth=bit_depth)
+
+    return {"job_id": str(uuid.uuid4()), "outputs": [output_path]}
+
+
 _HANDLERS = {
     "mix_stems": handle_mix_stems,
     "export_video": handle_export_video,
     "run_stem_split": handle_run_stem_split,
+    "run_denoise": handle_run_denoise,
+    "export_audio": handle_export_audio,
 }
 
 
