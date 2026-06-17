@@ -11,6 +11,7 @@ export interface BackendStatus {
   python_ok: boolean;
   ffmpeg_ok: boolean;
   onnx_provider: string;
+  gstreamer_ok: boolean;
   message: string;
 }
 

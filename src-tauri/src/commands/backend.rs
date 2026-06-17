@@ -9,6 +9,7 @@ pub struct BackendStatus {
     pub python_ok: bool,
     pub ffmpeg_ok: bool,
     pub onnx_provider: String, // "CUDA" | "DirectML" | "CoreML" | "CPU"
+    pub gstreamer_ok: bool,
     pub message: String,
 }
 
@@ -49,10 +50,31 @@ pub async fn check_backend(app: AppHandle) -> Result<BackendStatus, String> {
     let parsed: EngineCheckOutput = serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("Failed to parse sidecar output: {e}"))?;
 
+    // WebKitGTK needs GStreamer's autoaudiosink to initialise its media pipeline.
+    // A missing plugin causes a NULL GObject fault that hangs the process before
+    // any UI is shown, so we surface the gap here while we still can.
+    #[cfg(target_os = "linux")]
+    let gstreamer_ok = std::process::Command::new("gst-inspect-1.0")
+        .arg("autoaudiosink")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    #[cfg(not(target_os = "linux"))]
+    let gstreamer_ok = true;
+
+    let message = if !gstreamer_ok {
+        "GStreamer autoaudiosink missing — install gstreamer gst-plugins-base gst-plugins-good".into()
+    } else {
+        parsed.message
+    };
+
     Ok(BackendStatus {
         python_ok: true,
         ffmpeg_ok: parsed.ffmpeg_ok,
         onnx_provider: parsed.onnx_provider,
-        message: parsed.message,
+        gstreamer_ok,
+        message,
     })
 }
