@@ -1,8 +1,5 @@
 /**
  * Global application state (Zustand).
- *
- * Scaffold: shapes the data model for the batch queue, active track, processing
- * config, and progress. Actions are stubbed where they will call into `ipc`.
  */
 import { create } from "zustand";
 import type { ExportFormat, SplitTopology } from "../lib/ipc";
@@ -12,6 +9,15 @@ export interface AudioFile {
   name: string;
   path: string;
   status: "queued" | "processing" | "done" | "error";
+}
+
+export interface StemTrack {
+  id: string;    // "vocals" | "drums" | "bass" | "other" | "accompaniment"
+  label: string;
+  path: string;
+  volume: number;  // 0.0 – 2.0 (1.0 = unity)
+  pan: number;     // -1.0 … 0 … +1.0
+  muted: boolean;
 }
 
 export interface ProcessingConfig {
@@ -32,12 +38,20 @@ export interface AppState {
   activeFileId: string | null;
   config: ProcessingConfig;
   progress: ProgressState;
+  stems: StemTrack[];
+  sourceIsVideo: boolean;
+  mixedAudioPath: string | null;
 
   addFiles: (files: AudioFile[]) => void;
   removeFile: (id: string) => void;
   setActive: (id: string | null) => void;
   updateConfig: (patch: Partial<ProcessingConfig>) => void;
   setProgress: (patch: Partial<ProgressState>) => void;
+  addStems: (stems: StemTrack[]) => void;
+  updateStem: (id: string, patch: Partial<StemTrack>) => void;
+  clearStems: () => void;
+  setSourceIsVideo: (isVideo: boolean) => void;
+  setMixedAudioPath: (path: string | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -50,11 +64,21 @@ export const useAppStore = create<AppState>((set) => ({
     bitDepth: 24,
   },
   progress: { active: false, stage: "", progress: 0 },
+  stems: [],
+  sourceIsVideo: false,
+  mixedAudioPath: null,
 
   addFiles: (files) => set((s) => ({ queue: [...s.queue, ...files] })),
-  removeFile: (id) =>
-    set((s) => ({ queue: s.queue.filter((f) => f.id !== id) })),
+  removeFile: (id) => set((s) => ({ queue: s.queue.filter((f) => f.id !== id) })),
   setActive: (id) => set({ activeFileId: id }),
   updateConfig: (patch) => set((s) => ({ config: { ...s.config, ...patch } })),
   setProgress: (patch) => set((s) => ({ progress: { ...s.progress, ...patch } })),
+  addStems: (stems) => set({ stems }),
+  updateStem: (id, patch) =>
+    set((s) => ({
+      stems: s.stems.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+    })),
+  clearStems: () => set({ stems: [], mixedAudioPath: null }),
+  setSourceIsVideo: (isVideo) => set({ sourceIsVideo: isVideo }),
+  setMixedAudioPath: (path) => set({ mixedAudioPath: path }),
 }));

@@ -1,16 +1,65 @@
 import { useAppStore } from "../../store/useAppStore";
+import StemMixer from "../StemMixer/StemMixer";
+import { ipc } from "../../lib/ipc";
 
 /**
- * Right panel — processing controls.
- * Scaffold: stem-split topology, denoise intensity slider, and export options
- * bound to the store. Action buttons call into `ipc` in Step 4.
+ * Right panel — stem topology, denoise, stem mixer, and export controls.
  */
 export default function ProcessingControls() {
   const config = useAppStore((s) => s.config);
   const updateConfig = useAppStore((s) => s.updateConfig);
+  const stems = useAppStore((s) => s.stems);
+  const sourceIsVideo = useAppStore((s) => s.sourceIsVideo);
+  const queue = useAppStore((s) => s.queue);
+  const activeFileId = useAppStore((s) => s.activeFileId);
+  const mixedAudioPath = useAppStore((s) => s.mixedAudioPath);
+  const setProgress = useAppStore((s) => s.setProgress);
+  const setMixedAudioPath = useAppStore((s) => s.setMixedAudioPath);
+
+  const activeFile = queue.find((f) => f.id === activeFileId) ?? null;
+
+  async function handleMixStems() {
+    if (!stems.length || !activeFile) return;
+    const outputPath = activeFile.path.replace(/(\.[^.]+)$/, "_mixed.wav");
+    setProgress({ active: true, stage: "Mixing stems…", progress: 0.1 });
+    try {
+      const result = await ipc.mixStems({
+        stems: stems.map((s) => ({
+          path: s.path,
+          volume: s.volume,
+          pan: s.pan,
+          muted: s.muted,
+        })),
+        output_path: outputPath,
+      });
+      setMixedAudioPath(result.outputs[0]);
+      setProgress({ active: false, stage: "", progress: 0 });
+    } catch (err) {
+      setProgress({ active: false, stage: "", progress: 0 });
+      console.error("mix_stems failed:", err);
+    }
+  }
+
+  async function handleExportVideo() {
+    if (!activeFile || !mixedAudioPath) return;
+    const ext = sourceIsVideo ? activeFile.path.match(/\.[^.]+$/)?.[0] ?? ".mp4" : ".mp4";
+    const outputPath = activeFile.path.replace(/(\.[^.]+)$/, `_export${ext}`);
+    setProgress({ active: true, stage: "Exporting video…", progress: 0.1 });
+    try {
+      await ipc.exportVideo({
+        video_path: activeFile.path,
+        audio_path: mixedAudioPath,
+        output_path: outputPath,
+      });
+      setProgress({ active: false, stage: "", progress: 0 });
+    } catch (err) {
+      setProgress({ active: false, stage: "", progress: 0 });
+      console.error("export_video failed:", err);
+    }
+  }
 
   return (
-    <div className="flex h-full flex-col gap-6 p-4">
+    <div className="flex h-full flex-col gap-5 overflow-y-auto p-4">
       {/* Stem splitting */}
       <section>
         <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-accent-violet">
@@ -44,7 +93,7 @@ export default function ProcessingControls() {
           Noise Removal
         </h2>
         <label className="flex items-center justify-between text-sm text-slate-300">
-          Denoise Intensity
+          Intensity
           <span className="font-mono text-accent-amber">{config.denoiseIntensity}%</span>
         </label>
         <input
@@ -56,6 +105,9 @@ export default function ProcessingControls() {
           className="mt-2 w-full accent-amber-500"
         />
       </section>
+
+      {/* Stem mixer — appears after stem splitting */}
+      {stems.length > 0 && <StemMixer />}
 
       {/* Export */}
       <section>
@@ -79,7 +131,7 @@ export default function ProcessingControls() {
         </div>
       </section>
 
-      {/* Actions — TODO: wire to ipc.runStemSplit / runDenoise / exportAudio. */}
+      {/* Action buttons */}
       <div className="mt-auto flex flex-col gap-2">
         <button className="rounded bg-accent-violet/90 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-accent-violet">
           Split Stems
@@ -87,6 +139,22 @@ export default function ProcessingControls() {
         <button className="rounded bg-accent-amber/90 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-accent-amber">
           Denoise
         </button>
+        {stems.length > 0 && (
+          <button
+            onClick={handleMixStems}
+            className="rounded bg-accent-blue/90 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-accent-blue"
+          >
+            Mix Stems
+          </button>
+        )}
+        {sourceIsVideo && mixedAudioPath && (
+          <button
+            onClick={handleExportVideo}
+            className="rounded bg-emerald-600/90 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-500"
+          >
+            Export Video
+          </button>
+        )}
       </div>
     </div>
   );

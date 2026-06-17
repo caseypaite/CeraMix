@@ -23,6 +23,8 @@ pub fn run() {
             commands::process::run_stem_split,
             commands::process::run_denoise,
             commands::process::export_audio,
+            commands::mixer::mix_stems,
+            commands::video::export_video,
         ])
         .run(tauri::generate_context!())
         .expect("error while running CeraMix");

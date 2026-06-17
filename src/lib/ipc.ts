@@ -1,7 +1,5 @@
 /**
- * Typed wrapper around Tauri's async IPC. All long-running work is delegated to
- * the Rust shell, which in turn drives the Python backend — keeping the UI
- * thread free.
+ * Typed wrapper around Tauri's async IPC.
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -23,8 +21,26 @@ export interface JobResult {
 
 export interface ProgressEvent {
   jobId: string;
-  stage: string; // "Loading Model…" | "Analyzing Spectrum…" | "Writing Audio Files…"
+  stage: string;
   progress: number; // 0..1
+}
+
+export interface StemMixInput {
+  path: string;
+  volume: number;  // 0.0 – 2.0
+  pan: number;     // -1.0 … +1.0
+  muted: boolean;
+}
+
+export interface MixStemsRequest {
+  stems: StemMixInput[];
+  output_path: string;
+}
+
+export interface ExportVideoRequest {
+  video_path: string;
+  audio_path: string;
+  output_path: string;
 }
 
 export const ipc = {
@@ -42,13 +58,18 @@ export const ipc = {
     source_path: string,
     output_path: string,
     format: ExportFormat,
-    bit_depth = 24,
+    bit_depth: number = 24,
   ) =>
     invoke<JobResult>("export_audio", {
       req: { source_path, output_path, format, bit_depth },
     }),
 
-  /** Subscribe to staged progress events emitted during processing. */
+  mixStems: (req: MixStemsRequest) =>
+    invoke<JobResult>("mix_stems", { req }),
+
+  exportVideo: (req: ExportVideoRequest) =>
+    invoke<JobResult>("export_video", { req }),
+
   onProgress: (cb: (e: ProgressEvent) => void): Promise<UnlistenFn> =>
     listen<ProgressEvent>("processing://progress", (event) => cb(event.payload)),
 };
