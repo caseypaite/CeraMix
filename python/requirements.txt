@@ -8,6 +8,7 @@ onnxruntime>=1.18           # CPU baseline; swap for onnxruntime-gpu / -directml
 # Audio I/O
 soundfile>=0.12             # libsndfile bindings — high-fidelity WAV/FLAC
 numpy>=1.24
+scipy>=1.11                 # median_filter for HPSS stem separation
 
 # Model fetching
 requests>=2.31

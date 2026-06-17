@@ -60,16 +60,50 @@ pub async fn run_stem_split(app: AppHandle, req: StemSplitRequest) -> Result<Job
         .map_err(|e| format!("Failed to parse sidecar output: {e}"))
 }
 
-/// Run AI noise removal / speech enhancement (DeepFilterNet via ONNX).
+/// Run spectral noise reduction on a file via the Python backend.
 #[tauri::command]
-pub async fn run_denoise(req: DenoiseRequest) -> Result<JobResult, String> {
-    let _ = &req;
-    Err("run_denoise not yet implemented (scaffold).".into())
+pub async fn run_denoise(app: AppHandle, req: DenoiseRequest) -> Result<JobResult, String> {
+    let request_json =
+        serde_json::to_string(&req).map_err(|e| format!("Serialise error: {e}"))?;
+
+    let output = app
+        .shell()
+        .sidecar("ceramix-engine")
+        .map_err(|e| format!("Failed to locate sidecar: {e}"))?
+        .args(["--command", "run_denoise", "--request", &request_json])
+        .output()
+        .await
+        .map_err(|e| format!("Sidecar launch failed: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("run_denoise failed: {stderr}"));
+    }
+
+    serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse sidecar output: {e}"))
 }
 
-/// Mux/encode a processed buffer to the requested output format via FFmpeg.
+/// Encode a processed audio file to WAV or MP3 via the Python backend.
 #[tauri::command]
-pub async fn export_audio(req: ExportRequest) -> Result<JobResult, String> {
-    let _ = &req;
-    Err("export_audio not yet implemented (scaffold).".into())
+pub async fn export_audio(app: AppHandle, req: ExportRequest) -> Result<JobResult, String> {
+    let request_json =
+        serde_json::to_string(&req).map_err(|e| format!("Serialise error: {e}"))?;
+
+    let output = app
+        .shell()
+        .sidecar("ceramix-engine")
+        .map_err(|e| format!("Failed to locate sidecar: {e}"))?
+        .args(["--command", "export_audio", "--request", &request_json])
+        .output()
+        .await
+        .map_err(|e| format!("Sidecar launch failed: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("export_audio failed: {stderr}"));
+    }
+
+    serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse sidecar output: {e}"))
 }
