@@ -2,13 +2,8 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag (e.g. v0.1.0) — must already exist in the repo"
-        required: true
+    branches:
+      - main
 
 permissions:
   contents: write # required for creating releases and uploading assets
@@ -199,7 +194,9 @@ jobs:
   build-ios:
     name: iOS
     runs-on: macos-latest
-    continue-on-error: true
+    # Skip entirely when Apple signing secrets are absent — xcodebuild always
+    # requires a development team and will fail without them.
+    if: ${{ secrets.BUILD_CERTIFICATE_BASE64 != '' }}
     env:
       BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
       BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
@@ -318,16 +315,19 @@ jobs:
           key: android
 
       # ── Build ─────────────────────────────────────────────────────────────
+      # ANDROID_SDK_ROOT is a shell env var on ubuntu runners but NOT in the
+      # GitHub Actions `env` context — export it explicitly for subsequent steps.
+      - name: Export ANDROID_HOME
+        run: echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+
       - name: Initialize Android project
         run: pnpm tauri android init
         env:
-          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
           NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
 
       - name: Build Android APK (unsigned)
         run: pnpm tauri android build --apk
         env:
-          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
           NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
 
       - uses: actions/upload-artifact@v4
@@ -343,7 +343,7 @@ jobs:
   release:
     name: GitHub Release
     needs: [build-tauri, build-ios, build-android]
-    if: always() && needs.build-tauri.result == 'success' && needs.build-android.result == 'success'
+    if: always() && needs.build-tauri.result == 'success' && needs.build-android.result == 'success' && (needs.build-ios.result == 'success' || needs.build-ios.result == 'skipped')
     runs-on: ubuntu-latest
 
     steps:
@@ -351,15 +351,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Resolve effective tag for both push and manual-dispatch triggers.
+      # Derive release tag from package.json version (e.g. 0.0.1 → v0.0.1).
       - name: Resolve release tag
         id: tag
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "name=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-          fi
+          VERSION=$(node -p "require('./package.json').version")
+          echo "name=v${VERSION}" >> "$GITHUB_OUTPUT"
 
       # Desktop artifacts (always present)
       - uses: actions/download-artifact@v4
