@@ -26,7 +26,7 @@ pub struct ExportRequest {
     pub bit_depth: u8,     // 16 | 24 | 32 (WAV only)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct JobResult {
     pub job_id: String,
     pub outputs: Vec<String>,
