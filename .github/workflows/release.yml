@@ -21,7 +21,8 @@ env:
 jobs:
   # ──────────────────────────────────────────────────────────────────────────
   # JOB 1 — Bundle the Python inference backend into a standalone binary.
-  #          Runs in parallel for Windows and Linux.
+  #          Runs for Windows, Linux, and macOS (desktop only — mobile cannot
+  #          run arbitrary sidecar processes).
   # ──────────────────────────────────────────────────────────────────────────
   build-sidecar:
     name: Sidecar / ${{ matrix.os }}
@@ -35,6 +36,10 @@ jobs:
             pyinstaller_output: python/dist/ceramix-engine.exe
           - os: ubuntu-22.04
             triple: x86_64-unknown-linux-gnu
+            exe_suffix: ""
+            pyinstaller_output: python/dist/ceramix-engine
+          - os: macos-latest
+            triple: aarch64-apple-darwin
             exe_suffix: ""
             pyinstaller_output: python/dist/ceramix-engine
 
@@ -83,7 +88,7 @@ jobs:
           if-no-files-found: error
 
   # ──────────────────────────────────────────────────────────────────────────
-  # JOB 2 — Build the Tauri app with the sidecar embedded.
+  # JOB 2 — Build the Tauri desktop app (Windows, Linux, macOS).
   #          Downloads the matching sidecar artifact, places it in
   #          src-tauri/binaries/, then runs `pnpm tauri build`.
   # ──────────────────────────────────────────────────────────────────────────
@@ -105,6 +110,12 @@ jobs:
             exe_suffix: ""
             tauri_args: "--target x86_64-unknown-linux-gnu --bundles appimage"
             artifact_glob: "src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage"
+
+          - os: macos-latest
+            triple: aarch64-apple-darwin
+            exe_suffix: ""
+            tauri_args: "--target aarch64-apple-darwin --bundles dmg"
+            artifact_glob: "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg"
 
     runs-on: ${{ matrix.os }}
 
@@ -158,15 +169,12 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      # No lockfile committed yet (scaffold stage) — generate one on the fly.
       - run: pnpm install --no-frozen-lockfile
 
       # ── Build ─────────────────────────────────────────────────────────────
       - name: Build Tauri app
         run: pnpm tauri build ${{ matrix.tauri_args }}
         env:
-          # Optional Tauri updater signing. Configure these secrets in
-          # Settings → Secrets → Actions to enable signed updates.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
@@ -181,11 +189,161 @@ jobs:
           if-no-files-found: error
 
   # ──────────────────────────────────────────────────────────────────────────
-  # JOB 3 — Create a GitHub Release and attach all platform binaries.
+  # JOB 3 — Build iOS IPA.
+  #          Requires Apple signing secrets for a distributable IPA.
+  #          Set BUILD_CERTIFICATE_BASE64, P12_PASSWORD, KEYCHAIN_PASSWORD,
+  #          and BUILD_PROVISION_PROFILE_BASE64 in Settings → Secrets.
+  #          Without secrets the job is marked continue-on-error and skipped
+  #          from the release assets.
+  # ──────────────────────────────────────────────────────────────────────────
+  build-ios:
+    name: iOS
+    runs-on: macos-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - run: pnpm install --no-frozen-lockfile
+
+      # ── Rust with iOS target ───────────────────────────────────────────────
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: aarch64-apple-ios
+
+      # ── Apple code-signing (optional) ─────────────────────────────────────
+      # Import the .p12 certificate into a temporary keychain so xcodebuild
+      # can sign the archive. Skip these two steps if secrets are absent.
+      - name: Install Apple signing certificate
+        if: ${{ secrets.BUILD_CERTIFICATE_BASE64 != '' }}
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          CERT=$RUNNER_TEMP/cert.p12
+          KEYCHAIN=$RUNNER_TEMP/app.keychain-db
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERT"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychain -d user -s "$KEYCHAIN"
+
+      - name: Install provisioning profile
+        if: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 != '' }}
+        env:
+          BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
+        run: |
+          PP=$RUNNER_TEMP/profile.mobileprovision
+          echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o "$PP"
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp "$PP" ~/Library/MobileDevice/Provisioning\ Profiles/
+
+      # ── Build ─────────────────────────────────────────────────────────────
+      - name: Initialize iOS project
+        run: pnpm tauri ios init
+
+      - name: Build iOS
+        run: pnpm tauri ios build
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: src-tauri/gen/apple/build/**/*.ipa
+          if-no-files-found: warn
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 4 — Build Android APK (unsigned).
+  #          Produces a universal unsigned release APK that users can
+  #          sideload. Add ANDROID_KEYSTORE_BASE64, ANDROID_KEY_ALIAS,
+  #          ANDROID_KEY_PASSWORD, and ANDROID_STORE_PASSWORD secrets to
+  #          enable a signed APK for Play Store submission.
+  # ──────────────────────────────────────────────────────────────────────────
+  build-android:
+    name: Android
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - run: pnpm install --no-frozen-lockfile
+
+      # ── Java (Android build toolchain) ────────────────────────────────────
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # ── Android NDK ───────────────────────────────────────────────────────
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+          add-to-path: true
+
+      # ── Rust with Android targets ──────────────────────────────────────────
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: android
+
+      # ── Build ─────────────────────────────────────────────────────────────
+      - name: Initialize Android project
+        run: pnpm tauri android init
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+          NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+
+      - name: Build Android APK (unsigned)
+        run: pnpm tauri android build --apk
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+          NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 5 — Create a GitHub Release and attach all platform binaries.
+  #          Requires desktop builds; iOS is optional (continue-on-error).
   # ──────────────────────────────────────────────────────────────────────────
   release:
     name: GitHub Release
-    needs: build-tauri
+    needs: [build-tauri, build-ios, build-android]
+    if: always() && needs.build-tauri.result == 'success' && needs.build-android.result == 'success'
     runs-on: ubuntu-latest
 
     steps:
@@ -203,11 +361,25 @@ jobs:
             echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
           fi
 
+      # Desktop artifacts (always present)
       - uses: actions/download-artifact@v4
         with:
           pattern: tauri-*
           path: release-assets
           merge-multiple: true
+
+      # Android APK
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: release-assets
+
+      # iOS IPA — optional, skipped silently if the job failed or produced no IPA
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios-ipa
+          path: release-assets
+        continue-on-error: true
 
       - name: List release assets
         run: ls -lh release-assets/
