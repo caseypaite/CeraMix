@@ -253,6 +253,10 @@ jobs:
           cp "$PP" ~/Library/MobileDevice/Provisioning\ Profiles/
 
       # ── Build ─────────────────────────────────────────────────────────────
+      # tauri-build validates externalBin paths at compile time for iOS too.
+      - name: Create placeholder sidecar for iOS (externalBin compile-time check)
+        run: mkdir -p src-tauri/binaries && touch src-tauri/binaries/ceramix-engine-aarch64-apple-ios
+
       - name: Initialize iOS project
         run: pnpm tauri ios init
 
@@ -320,6 +324,16 @@ jobs:
       # GitHub Actions `env` context — export it explicitly for subsequent steps.
       - name: Export ANDROID_HOME
         run: echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+
+      # tauri-build validates externalBin paths at compile time for every target
+      # triple, including Android. The Python sidecar can't run on Android, but
+      # we still need placeholder files so the build doesn't error out.
+      - name: Create placeholder sidecars for Android (externalBin compile-time check)
+        run: |
+          mkdir -p src-tauri/binaries
+          for triple in aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android; do
+            touch "src-tauri/binaries/ceramix-engine-${triple}"
+          done
 
       - name: Initialize Android project
         run: pnpm tauri android init
