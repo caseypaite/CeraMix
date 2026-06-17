@@ -27,7 +27,7 @@ export interface ProgressState {
   progress: number; // 0..1
 }
 
-interface AppState {
+export interface AppState {
   queue: AudioFile[];
   activeFileId: string | null;
   config: ProcessingConfig;
