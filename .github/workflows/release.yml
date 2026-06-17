@@ -12,6 +12,8 @@ env:
   PYTHON_VERSION: "3.11"
   NODE_VERSION: "20"
   PNPM_VERSION: "9"
+  # Node.js 20 GitHub Actions are deprecated from June 16 2026 — opt in to Node 24 explicitly.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────────
@@ -166,6 +168,11 @@ jobs:
 
       - run: pnpm install --no-frozen-lockfile
 
+      # ── macOS: create-dmg is required by Tauri's bundle_dmg.sh ──────────────
+      - name: Install create-dmg (macOS only)
+        if: matrix.os == 'macos-latest'
+        run: brew install create-dmg
+
       # ── Build ─────────────────────────────────────────────────────────────
       - name: Build Tauri app
         run: pnpm tauri build ${{ matrix.tauri_args }}
@@ -281,6 +288,9 @@ jobs:
   build-android:
     name: Android
     runs-on: ubuntu-22.04
+    # Android builds are best-effort — signing and mobile entry-point issues
+    # should not block the desktop release.
+    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
@@ -358,7 +368,8 @@ jobs:
   release:
     name: GitHub Release
     needs: [build-tauri, build-ios, build-android]
-    if: always() && needs.build-tauri.result == 'success' && needs.build-android.result == 'success'
+    # Desktop builds must succeed. iOS and Android are best-effort.
+    if: always() && needs.build-tauri.result == 'success'
     runs-on: ubuntu-latest
 
     steps:
@@ -380,11 +391,12 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      # Android APK
+      # Android APK — optional, skipped if build-android failed
       - uses: actions/download-artifact@v4
         with:
           name: android-apk
           path: release-assets
+        continue-on-error: true
 
       # iOS IPA — optional, skipped silently if the job failed or produced no IPA
       - uses: actions/download-artifact@v4
