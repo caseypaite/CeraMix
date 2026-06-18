@@ -47,28 +47,8 @@
     "shortDescription": "AI audio cleanup, stem splitting & noise removal.",
     "longDescription": "CeraMix is a cross-platform desktop app that uses local open-source AI models to clean up recordings, split them into stems, and remove noise — all on your own machine.",
     "linux": {
-      "desktopTemplate": "packaging/ceramix.desktop",
-      "pacman": {
-        "depends": [
-          "webkit2gtk-4.1",
-          "gtk3",
-          "libayatana-appindicator-gtk3",
-          "librsvg",
-          "ffmpeg",
-          "xdg-desktop-portal",
-          "glib2",
-          "dbus"
-        ],
-        "optDepends": [
-          "xdg-desktop-portal-wlr: Wayland file picker (wlroots-based compositors)",
-          "xdg-desktop-portal-gtk: Wayland file picker (GTK/GNOME)",
-          "xdg-desktop-portal-hyprland: Wayland file picker (Hyprland)",
-          "xdg-desktop-portal-kde: Wayland file picker (KDE Plasma)",
-          "cuda: NVIDIA GPU acceleration for AI inference",
-          "rocm-opencl-runtime: AMD GPU acceleration for AI inference"
-        ]
-      },
       "deb": {
+        "desktopTemplate": "packaging/ceramix.desktop",
         "depends": [
           "libwebkit2gtk-4.1-0",
           "libgtk-3-0",
