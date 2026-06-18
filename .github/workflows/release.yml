@@ -199,7 +199,8 @@ jobs:
             librsvg2-dev \
             patchelf \
             libssl-dev \
-            libglib2.0-dev
+            libglib2.0-dev \
+            libfuse2
 
       # ── Rust ──────────────────────────────────────────────────────────────
       - uses: dtolnay/rust-toolchain@stable
@@ -307,7 +308,7 @@ jobs:
 
       # ── Node / pnpm ───────────────────────────────────────────────────────
       - name: Install pnpm
-        run: npm install -g pnpm
+        run: npm install -g pnpm@$PNPM_VERSION
 
       - run: pnpm install --no-frozen-lockfile
 
