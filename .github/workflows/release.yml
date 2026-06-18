@@ -159,8 +159,8 @@ jobs:
           - os: ubuntu-22.04
             triple: x86_64-unknown-linux-gnu
             exe_suffix: ""
-            tauri_args: "--target x86_64-unknown-linux-gnu --bundles appimage"
-            artifact_glob: "src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage"
+            tauri_args: "--target x86_64-unknown-linux-gnu --bundles deb"
+            artifact_glob: "src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb"
 
           - os: macos-latest
             triple: aarch64-apple-darwin
@@ -249,10 +249,8 @@ jobs:
           if-no-files-found: error
 
   # ──────────────────────────────────────────────────────────────────────────
-  # JOB 2b — Build the Tauri app natively on Arch Linux.
-  #           Produces both an AppImage and a pacman .pkg.tar.zst so users on
-  #           Arch / EndeavourOS can install with `sudo pacman -U ceramix.pkg.tar.zst`
-  #           without needing the AppImage runtime.
+  # JOB 2b — Build the Tauri app natively on Arch Linux (AppImage).
+  #           continue-on-error so an Arch regression never blocks the release.
   # ──────────────────────────────────────────────────────────────────────────
   build-tauri-arch:
     name: Tauri / Arch Linux
@@ -312,29 +310,21 @@ jobs:
 
       - run: pnpm install --no-frozen-lockfile
 
-      # ── Build (AppImage + pacman .pkg.tar.zst) ────────────────────────────
-      - name: Build Tauri app (appimage + pacman)
-        run: pnpm tauri build --target x86_64-unknown-linux-gnu --bundles appimage,pacman
+      # ── Build AppImage ────────────────────────────────────────────────────
+      - name: Build Tauri app (appimage)
+        run: pnpm tauri build --target x86_64-unknown-linux-gnu --bundles appimage
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPIMAGE_EXTRACT_AND_RUN: 1
 
       - name: List bundle output
-        run: |
-          ls -lh src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/ || true
-          ls -lh src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/pacman/   || true
+        run: ls -lh src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/ || true
 
       - uses: actions/upload-artifact@v4
         with:
           name: tauri-arch-appimage
           path: src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
-          if-no-files-found: warn
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: tauri-arch-pacman
-          path: src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/pacman/*.pkg.tar.zst
           if-no-files-found: warn
 
   # ──────────────────────────────────────────────────────────────────────────
@@ -542,13 +532,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: tauri-arch-appimage
-          path: release-assets
-        continue-on-error: true
-
-      # Arch Linux pacman package — optional
-      - uses: actions/download-artifact@v4
-        with:
-          name: tauri-arch-pacman
           path: release-assets
         continue-on-error: true
 
