@@ -85,6 +85,60 @@ jobs:
           if-no-files-found: error
 
   # ──────────────────────────────────────────────────────────────────────────
+  # JOB 1b — Bundle the Python sidecar for Arch Linux / EndeavourOS.
+  #           Uses the official archlinux Docker image so packages are resolved
+  #           against pacman instead of apt.  continue-on-error so an Arch
+  #           regression never blocks the primary desktop release.
+  # ──────────────────────────────────────────────────────────────────────────
+  build-sidecar-arch:
+    name: Sidecar / Arch Linux
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux/archlinux:latest
+    continue-on-error: true
+
+    steps:
+      # Bootstrap: git is not installed in the base Arch image.
+      - name: Install bootstrap packages
+        run: pacman -Syu --noconfirm --needed base-devel git curl python python-pip
+
+      - uses: actions/checkout@v4
+
+      - name: Fix git safe.directory in container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Cache pip (Arch)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-arch-${{ hashFiles('python/requirements.txt') }}
+          restore-keys: pip-arch-
+
+      - name: Install Python dependencies + PyInstaller
+        working-directory: python
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build sidecar (PyInstaller --onefile)
+        working-directory: python
+        run: pyinstaller ceramix_engine.spec --distpath dist --workpath build --noconfirm
+
+      - name: Rename to Tauri sidecar convention
+        run: |
+          src="python/dist/ceramix-engine"
+          dst="python/dist/ceramix-engine-x86_64-unknown-linux-gnu"
+          mv "$src" "$dst"
+          ls -lh python/dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-arch
+          path: python/dist/ceramix-engine-x86_64-unknown-linux-gnu
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────────────
   # JOB 2 — Build the Tauri desktop app (Windows, Linux, macOS).
   #          Downloads the matching sidecar artifact, places it in
   #          src-tauri/binaries/, then runs `pnpm tauri build`.
@@ -189,6 +243,89 @@ jobs:
           name: tauri-${{ matrix.os }}
           path: ${{ matrix.artifact_glob }}
           if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 2b — Build the Tauri app natively on Arch Linux.
+  #           Produces both an AppImage and a pacman .pkg.tar.zst so users on
+  #           Arch / EndeavourOS can install with `sudo pacman -U ceramix.pkg.tar.zst`
+  #           without needing the AppImage runtime.
+  # ──────────────────────────────────────────────────────────────────────────
+  build-tauri-arch:
+    name: Tauri / Arch Linux
+    needs: build-sidecar-arch
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux/archlinux:latest
+    continue-on-error: true
+
+    steps:
+      # ── Bootstrap ────────────────────────────────────────────────────────
+      - name: Install system dependencies (pacman)
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git curl \
+            webkit2gtk-4.1 gtk3 libayatana-appindicator-gtk3 \
+            librsvg openssl glib2 dbus patchelf \
+            wayland wayland-protocols libxkbcommon \
+            nodejs npm
+
+      - uses: actions/checkout@v4
+
+      - name: Fix git safe.directory in container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # ── Sidecar ───────────────────────────────────────────────────────────
+      - uses: actions/download-artifact@v4
+        with:
+          name: sidecar-arch
+          path: sidecar-staging
+
+      - name: Place sidecar in src-tauri/binaries/
+        run: |
+          mkdir -p src-tauri/binaries
+          sidecar="ceramix-engine-x86_64-unknown-linux-gnu"
+          cp "sidecar-staging/$sidecar" "src-tauri/binaries/$sidecar"
+          chmod +x "src-tauri/binaries/$sidecar"
+
+      # ── Rust ─────────────────────────────────────────────────────────────
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: x86_64-unknown-linux-gnu-arch
+
+      # ── Node / pnpm ───────────────────────────────────────────────────────
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - run: pnpm install --no-frozen-lockfile
+
+      # ── Build (AppImage + pacman .pkg.tar.zst) ────────────────────────────
+      - name: Build Tauri app (appimage + pacman)
+        run: pnpm tauri build --target x86_64-unknown-linux-gnu --bundles appimage,pacman
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: List bundle output
+        run: |
+          ls -lh src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/ || true
+          ls -lh src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/pacman/   || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tauri-arch-appimage
+          path: src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tauri-arch-pacman
+          path: src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/pacman/*.pkg.tar.zst
+          if-no-files-found: warn
 
   # ──────────────────────────────────────────────────────────────────────────
   # JOB 3 — Build iOS IPA.
@@ -367,8 +504,8 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────────
   release:
     name: GitHub Release
-    needs: [build-tauri, build-ios, build-android]
-    # Desktop builds must succeed. iOS and Android are best-effort.
+    needs: [build-tauri, build-tauri-arch, build-ios, build-android]
+    # Primary desktop builds must succeed. Arch, iOS, and Android are best-effort.
     if: always() && needs.build-tauri.result == 'success'
     runs-on: ubuntu-latest
 
@@ -390,6 +527,20 @@ jobs:
           pattern: tauri-*
           path: release-assets
           merge-multiple: true
+
+      # Arch Linux AppImage — optional, skipped if build-tauri-arch failed
+      - uses: actions/download-artifact@v4
+        with:
+          name: tauri-arch-appimage
+          path: release-assets
+        continue-on-error: true
+
+      # Arch Linux pacman package — optional
+      - uses: actions/download-artifact@v4
+        with:
+          name: tauri-arch-pacman
+          path: release-assets
+        continue-on-error: true
 
       # Android APK — optional, skipped if build-android failed
       - uses: actions/download-artifact@v4

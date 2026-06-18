@@ -1,0 +1,98 @@
+# Maintainer: CeraMix contributors <https://github.com/caseypaite/CeraMix>
+#
+# This is a binary PKGBUILD that downloads the upstream AppImage release
+# and wraps it with a Wayland-aware launcher script.
+#
+# To install:
+#   cd packaging
+#   makepkg -si
+#
+# To update the sha256sum after a new release:
+#   makepkg -g >> PKGBUILD
+
+pkgname=ceramix-bin
+pkgver=0.0.1
+pkgrel=1
+pkgdesc="AI audio cleanup, stem splitting and noise removal (binary release)"
+arch=('x86_64')
+url="https://github.com/caseypaite/CeraMix"
+license=('custom')
+
+# Runtime dependencies only — the AppImage bundles WebKitGTK, GTK3, etc.
+# but still requires a working Wayland/X11 session and xdg-desktop-portal
+# for native file dialogs.
+depends=(
+    'ffmpeg'
+    'xdg-desktop-portal'
+    'dbus'
+)
+
+optdepends=(
+    'xdg-desktop-portal-wlr: Wayland file picker (wlroots: Sway, Wayfire…)'
+    'xdg-desktop-portal-gtk: Wayland file picker (GTK / GNOME)'
+    'xdg-desktop-portal-hyprland: Wayland file picker (Hyprland)'
+    'xdg-desktop-portal-kde: Wayland file picker (KDE Plasma)'
+    'cuda: NVIDIA GPU acceleration for AI inference'
+    'rocm-opencl-runtime: AMD GPU acceleration for AI inference'
+)
+
+# AppImage produced by `pnpm tauri build --bundles appimage`.
+# Tauri names it: {ProductName}_{version}_amd64.AppImage
+_appimage="CeraMix_${pkgver}_amd64.AppImage"
+source=("${_appimage}::https://github.com/caseypaite/CeraMix/releases/download/v${pkgver}/${_appimage}")
+sha256sums=('SKIP')   # replace with actual hash before publishing to AUR
+
+prepare() {
+    chmod +x "${srcdir}/${_appimage}"
+
+    # Extract AppImage contents into squashfs-root/
+    "${srcdir}/${_appimage}" --appimage-extract >/dev/null
+}
+
+package() {
+    local _root="${srcdir}/squashfs-root"
+
+    # ── Application directory ──────────────────────────────────────────────
+    install -d "${pkgdir}/opt/ceramix"
+    cp -r "${_root}/." "${pkgdir}/opt/ceramix/"
+
+    # ── Wayland-aware launcher script ──────────────────────────────────────
+    # Runs under both Wayland and X11 sessions.  Sets GDK_BACKEND=wayland
+    # when WAYLAND_DISPLAY is detected and the user has not already overridden
+    # GDK_BACKEND — avoiding XWayland fallback on pure Wayland desktops.
+    install -Dm755 /dev/stdin "${pkgdir}/usr/bin/ceramix" <<'LAUNCHER'
+#!/bin/bash
+if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${GDK_BACKEND:-}" ]]; then
+    export GDK_BACKEND=wayland
+fi
+exec /opt/ceramix/ceramix "$@"
+LAUNCHER
+
+    # ── Desktop entry ──────────────────────────────────────────────────────
+    # Use the desktop entry shipped inside the AppImage; update Exec to point
+    # at the wrapper script rather than the raw binary.
+    local _desktop_src="${_root}/ceramix.desktop"
+    if [[ ! -f "${_desktop_src}" ]]; then
+        _desktop_src="${_root}/usr/share/applications/ceramix.desktop"
+    fi
+
+    if [[ -f "${_desktop_src}" ]]; then
+        install -Dm644 "${_desktop_src}" \
+            "${pkgdir}/usr/share/applications/ceramix.desktop"
+        # Rewrite Exec= to use the Wayland-aware wrapper
+        sed -i 's|^Exec=.*|Exec=ceramix %U|' \
+            "${pkgdir}/usr/share/applications/ceramix.desktop"
+    fi
+
+    # ── Icons ─────────────────────────────────────────────────────────────
+    find "${_root}/usr/share/icons" -name '*.png' -o -name '*.svg' \
+        2>/dev/null | while IFS= read -r icon; do
+        rel="${icon#"${_root}/"}"
+        install -Dm644 "${icon}" "${pkgdir}/${rel}"
+    done
+
+    # Fallback: icon at AppImage root
+    [[ -f "${_root}/ceramix.png" ]] && \
+        install -Dm644 "${_root}/ceramix.png" \
+            "${pkgdir}/usr/share/pixmaps/ceramix.png"
+}
