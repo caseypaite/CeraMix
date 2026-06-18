@@ -1,0 +1,20 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name={{product_name}}
+GenericName=Audio Stem Splitter
+Comment={{short_description}}
+Exec={{exec}} %U
+Icon={{product_name}}
+Terminal=false
+Type=Application
+StartupNotify=true
+StartupWMClass={{product_name}}
+
+# Audio application categories
+Categories=AudioVideo;Audio;Music;Production;
+
+# Keywords enable discovery via application launchers (Wofi, Rofi, GNOME Shell…)
+Keywords=audio;music;stems;noise;mixing;demucs;cleanup;separation;
+
+# MIME types — lets file managers open supported formats directly in CeraMix
+MimeType=audio/flac;audio/mpeg;audio/ogg;audio/x-wav;audio/wav;audio/aac;audio/mp4;video/mp4;video/quicktime;video/x-msvideo;video/x-matroska;
