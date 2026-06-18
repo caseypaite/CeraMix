@@ -233,6 +233,9 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # linuxdeploy is itself an AppImage; FUSE is unavailable on GH runners.
+          # This flag makes it extract and run without FUSE.
+          APPIMAGE_EXTRACT_AND_RUN: 1
 
       - name: List bundle output
         shell: bash
@@ -260,6 +263,11 @@ jobs:
 
     steps:
       # ── Bootstrap ────────────────────────────────────────────────────────
+      # The runner injects HOME=/github/home, but root's real home is /root.
+      # Rustup refuses to run when these differ, so correct it first.
+      - name: Fix HOME for root user in container
+        run: echo "HOME=/root" >> $GITHUB_ENV
+
       - name: Install system dependencies (pacman)
         run: |
           pacman -Syu --noconfirm --needed \
@@ -309,6 +317,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPIMAGE_EXTRACT_AND_RUN: 1
 
       - name: List bundle output
         run: |
