@@ -69,7 +69,6 @@ export default function FileExplorer() {
     return () => {
       unlistens.forEach((fn) => fn());
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally run once; store refs are stable
 
   function handleSelect(id: string, path: string) {
